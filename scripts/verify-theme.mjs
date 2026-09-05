@@ -124,7 +124,7 @@ section('Feature flags off means no JavaScript')
   const off = original
     .replace(
       /features:\s*\{[\s\S]*?\}/,
-      `features: { toc: true, backlinks: true, tags: false, themeToggle: false, metadata: false, prevNext: true, graph: false, search: false, hoverPreview: false, rss: false, embeds: false }`,
+      `features: { toc: true, backlinks: true, tags: false, themeToggle: false, metadata: false, prevNext: true, inlineTitle: false, graph: false, search: false, hoverPreview: false, rss: false, embeds: false }`,
     )
     .replace(/\bnav:\s*'(?:tree|tags|none)'/, `nav: 'none'`)
     /**
@@ -157,6 +157,10 @@ section('Feature flags off means no JavaScript')
     // that missed it would leave the click-to-play island in a build this
     // section asserts ships no JavaScript at all.
     [/\bembeds:\s*false/, 'features.embeds'],
+    // Ships no JavaScript either way, so it rides along here purely to get one
+    // real build with the note titles off. A missed rewrite would leave the
+    // two markup checks below asserting nothing.
+    [/\binlineTitle:\s*false/, 'features.inlineTitle'],
     [/\bnav:\s*'none'/, 'nav'],
     ...(/\bprovider:/.test(original) ? [[/\bprovider:\s*'none'/, 'analytics.provider']] : []),
   ]
@@ -185,6 +189,19 @@ section('Feature flags off means no JavaScript')
 
     check(themeCode.length === 0, 'themeToggle off removes its inline script entirely')
     check(tagChips.length === 0, 'tags off removes every tag chip')
+    /**
+     * The one option here that is about markup rather than about a bundle, and
+     * the only place its two halves are proved together against a real build.
+     *
+     * A note's own `<h1>` goes. A folder listing's, a tag page's and the 404's
+     * stay: those have no note behind them, so the heading is the only thing
+     * naming the page, and Obsidian Publish (where the option comes from) has
+     * no such pages for it to have meant.
+     */
+    const noteTitles = offPages.filter((html) => html.includes('class="note-title"'))
+    const indexTitles = offPages.filter((html) => html.includes('class="index-title"'))
+    check(noteTitles.length === 0, 'inlineTitle off removes the note title')
+    check(indexTitles.length > 0, 'and leaves the pages it was never about with theirs', `${indexTitles.length} page(s)`)
     /**
      * The markup half of the guarantee the no-JavaScript check makes below.
      * With `hoverPreview` off the excerpts are *absent* from the anchors, not
@@ -952,6 +969,11 @@ section('An Open Publish snapshot is served at the addresses it was published at
       // install already does.
       showPageMetadata: true,
       showPrevNext: true,
+      // Both on, which is their default: this pass is about them reaching the
+      // generated config at all. The rendered effect of turning one off is the
+      // features-off pass above, which builds the whole site without them.
+      showHoverPreview: true,
+      showInlineTitle: true,
       analytics: { provider: 'none', id: '' },
     },
     files,
@@ -1124,8 +1146,12 @@ section('An Open Publish snapshot is served at the addresses it was published at
         generated.slice(-400),
       )
       check(
-        /"metadata": true/.test(generated) && /"prevNext": true/.test(generated),
-        'the two newest site options reached the generated config',
+        /"metadata": true/.test(generated) &&
+          /"prevNext": true/.test(generated) &&
+          /"hoverPreview": true/.test(generated) &&
+          /"inlineTitle": true/.test(generated),
+        'the four newest site options reached the generated config',
+        generated.slice(-400),
       )
       check(
         /"locale": "fa-IR"/.test(generated) && /"dir": "rtl"/.test(generated),
@@ -1291,6 +1317,17 @@ section('An Open Publish snapshot is served at the addresses it was published at
           criticalPage.includes('>Wisdom &amp; Approaches<'),
           'the folder reads by its real name in the breadcrumb and the sidebar',
           criticalPage.includes('>wisdom-approaches<') ? 'it reads as its slug' : 'no crumb found',
+        )
+        /**
+         * And stops there. The trail used to end with the note's own title, one
+         * line above the `<h1>` printing the same string, which on a snapshot
+         * build — every note written at its slug — could say it three times over.
+         */
+        const crumb = criticalPage.match(/<p class="label note-crumb"[\s\S]*?<\/p>/)?.[0] ?? ''
+        check(
+          crumb !== '' && !crumb.includes('Critical Thinking'),
+          'the breadcrumb stops at the folder, and does not repeat the heading beneath it',
+          crumb === '' ? 'no crumb found' : crumb,
         )
         check(
           !/Also known as/.test(criticalPage),

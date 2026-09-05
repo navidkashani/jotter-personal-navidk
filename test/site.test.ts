@@ -7,12 +7,14 @@ import {
   folders,
   contains,
   neighbours,
+  resolveAllNotes,
   shadowedFolders,
+  trailFor,
   type TreeEntry,
   type TreeFolder,
 } from '../src/lib/tree.js'
 import { encodeSlug } from '../src/lib/url.js'
-import { noteHref, assetHref, tagHref, relativeAssetPath } from '../src/lib/href.js'
+import { noteHref, allNotesHref, assetHref, tagHref, relativeAssetPath } from '../src/lib/href.js'
 import { liveLabel } from '../src/lib/resolve.js'
 import { svgIntrinsicSize, isOptimizable } from '../src/lib/embed.js'
 import { sectionOf, preresolveLinks, expandTransclusions } from '../src/lib/transclude.js'
@@ -302,6 +304,55 @@ describe('tree', () => {
   })
 
   /**
+   * The other collision on `/notes`, and the one jotter itself caused: a vault
+   * folder called `Notes/` and the theme's own all-notes listing both want it.
+   * `src/pages/notes.astro` used to win it outright, so the folder's index page
+   * was never built and the sidebar's `Notes` link and the header's `All notes`
+   * link landed on the same page.
+   */
+  describe('the all-notes listing', () => {
+    const op = (path: string, slug: string) =>
+      ({ path, slug, title: slug, published: true, dates: { updated: new Date(0) }, tags: [] }) as unknown as VaultNote
+
+    it('is at /notes when nothing in the vault wants that URL', () => {
+      const published = [op('about.md', 'about'), op('ideas/seed.md', 'ideas/seed')]
+      expect(resolveAllNotes(buildTree(published, 'derive'), published)).toEqual({ slug: 'notes' })
+    })
+
+    it('yields to a vault folder called Notes, which keeps its own index page', () => {
+      const published = vault().notes.filter((n) => n.published)
+      const tree = buildTree(published, 'derive')
+
+      expect(resolveAllNotes(tree, published)).toEqual({ slug: 'all-notes', claimedBy: 'notes' })
+      // And the folder page the old static route was shadowing is real.
+      expect(folders(tree).map((f) => f.slug)).toContain('notes')
+    })
+
+    it('yields to a note at /notes as readily as to a folder', () => {
+      const published = [op('Notes.md', 'notes')]
+      expect(resolveAllNotes(buildTree(published, 'derive'), published)).toEqual({
+        slug: 'all-notes',
+        claimedBy: 'Notes.md',
+      })
+    })
+
+    /**
+     * A vault that took both. The header links to whatever comes back, so
+     * "no free slug" would be a 404 in the site chrome; there is always one.
+     */
+    it('keeps moving until it finds a URL nobody has claimed', () => {
+      const published = [op('Notes/a.md', 'notes/a'), op('All notes.md', 'all-notes')]
+      expect(resolveAllNotes(buildTree(published, 'derive'), published).slug).toBe('all-notes-2')
+    })
+
+    it('is spelled by href.ts, so the header cannot hardcode the old address', () => {
+      expect(allNotesHref('notes')).toBe('/notes')
+      expect(allNotesHref('all-notes')).toBe('/all-notes')
+      expect(allNotesHref('all-notes', 'garden')).toBe('/garden/all-notes')
+    })
+  })
+
+  /**
    * A note whose slug *is* a folder's slug: `About/About.md` carrying
    * `permalink: about`. Both want `/about`, the note wins it, and the sidebar
    * used to draw the pair twice over: once as a page above the folders and once
@@ -429,6 +480,124 @@ describe('tree', () => {
   })
 })
 
+/**
+ * The breadcrumb, which is the folders *above* the note and never the note.
+ * `Note.astro` prints the title in an `<h1>` on the very next line, so a title
+ * crumb only said the heading twice — and on an Open Publish build, where every
+ * note is written to its slug, three times.
+ *
+ * The shapes below are the ones real vaults produce rather than invented cases,
+ * and between them they are why `trailFor` needs two rules for the last crumb
+ * rather than one: a folder note is caught by its *slug*, a section landing page
+ * only by its *name*.
+ */
+describe('breadcrumb trail', () => {
+  /** The shape an Open Publish snapshot leaves, as `a folder note` above builds it. */
+  const op = (path: string, slug: string, title: string) =>
+    ({ path, slug, title, published: true, dates: { updated: new Date(0) }, tags: [] }) as unknown as VaultNote
+
+  const trail = (published: VaultNote[], of: VaultNote, names: Record<string, string> = {}) =>
+    trailFor(of, folders(buildTree(published, 'derive', names))).map((f) => f.name)
+
+  it('shows the folder a nested note is in, and not the note', () => {
+    const note = op(
+      'method/Progressive summarisation.md',
+      'method/progressive-summarisation',
+      'Progressive summarisation',
+    )
+    expect(trail([note], note)).toEqual(['method'])
+  })
+
+  it('walks the whole way down for a deeply nested one', () => {
+    const note = op('a/b/c/Note.md', 'a/b/c/note', 'Note')
+    expect(trail([note], note)).toEqual(['a', 'b', 'c'])
+  })
+
+  /** A lone crumb repeating the H1 is the worst version of the old shape. */
+  it('gives a root-level note nothing at all', () => {
+    const now = op('Now.md', 'now', 'Now')
+    expect(trail([now, op('method/x.md', 'method/x', 'X')], now)).toEqual([])
+  })
+
+  it('gives the homepage nothing', () => {
+    const home = op('index.md', 'index', 'Welcome')
+    expect(trail([home], home)).toEqual([])
+  })
+
+  /**
+   * `claimRoot` reassigns a promoted note's slug and leaves its path, so this
+   * one is served at `/` while still saying `About/` on disk. Answered by the
+   * slug, or the site root would carry a trail into a folder above it.
+   */
+  it('gives the homepage nothing when it was promoted out of a folder', () => {
+    const home = op('About/Welcome.md', 'index', 'Welcome')
+    expect(trail([home, op('About/Contact.md', 'about/contact', 'Contact')], home)).toEqual([])
+  })
+
+  /**
+   * The folder note: its slug *is* the folder's slug, so the old trail's first
+   * crumb linked to the page you were already on.
+   */
+  it('gives a folder note nothing: it is the folder', () => {
+    const about = op('About/About.md', 'about', 'About')
+    expect(trail([about, op('About/Contact.md', 'about/contact', 'Contact')], about)).toEqual([])
+  })
+
+  it('does the same for the Open Publish spelling, where the folder left the path', () => {
+    const about = op('about.md', 'about', 'About')
+    expect(trail([about, op('about/contact.md', 'about/contact', 'Contact')], about)).toEqual([])
+  })
+
+  /**
+   * The regression: a section landing page written at its own slug. The slugs
+   * differ here (`wp-statistics/wp-statistics` against `wp-statistics`), so only
+   * the folder's name reading the same as the title catches it. This printed
+   * `WP STATISTICS / WP STATISTICS` above an `<h1>` saying WP Statistics.
+   */
+  it('gives a section landing page nothing, though its slug is its own', () => {
+    const landing = op('wp-statistics/wp-statistics.md', 'wp-statistics/wp-statistics', 'WP Statistics')
+    const names = { 'wp-statistics': 'WP Statistics' }
+    expect(trail([landing], landing, names)).toEqual([])
+  })
+
+  it('still names that folder for the notes actually under it', () => {
+    const landing = op('wp-statistics/wp-statistics.md', 'wp-statistics/wp-statistics', 'WP Statistics')
+    const child = op('wp-statistics/roadmap.md', 'wp-statistics/roadmap', 'Roadmap')
+    expect(trail([landing, child], child, { 'wp-statistics': 'WP Statistics' })).toEqual([
+      'WP Statistics',
+    ])
+  })
+
+  /**
+   * macOS Finder writes NFD and zsh writes NFC, so one vault can hold both
+   * spellings of the same word — the reason `slug.ts` normalises at all. Here
+   * the folder's name arrives decomposed and the note's title composed. Case
+   * comes along for free: the crumb is uppercased in CSS either way.
+   */
+  it('matches the name against the title in one normal form, and one case', () => {
+    const landing = op('cafe\u0301/cafe\u0301.md', 'cafe\u0301/cafe\u0301', 'caf\u00e9')
+    expect(trail([landing], landing, { 'cafe\u0301': 'CAFE\u0301' })).toEqual([])
+  })
+
+  /**
+   * Only the *last* crumb is eligible. An ancestor that happens to match the
+   * title is a real step in the path, and dropping a middle segment would
+   * describe a hierarchy the vault does not have.
+   */
+  it('keeps an ancestor matching the title anywhere above the last position', () => {
+    const note = op('About/Team/About.md', 'about/team/about', 'About')
+    expect(trail([note], note)).toEqual(['About', 'Team'])
+  })
+
+  /**
+   * A permalink that moves a note to another URL does not move the note. The
+   * trail says where it lives, which is what the sidebar draws too.
+   */
+  it('trails where a permalinked note lives, not where it is served', () => {
+    const essay = op('writing/essay.md', 'blog/essay', 'Essay')
+    expect(trail([essay], essay)).toEqual(['writing'])
+  })
+})
 describe('svgIntrinsicSize', () => {
   it('reads width and height attributes', () => {
     expect(svgIntrinsicSize('<svg width="240" height="120"></svg>')).toEqual({ width: 240, height: 120 })
