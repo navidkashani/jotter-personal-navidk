@@ -161,7 +161,17 @@ const cardImage = image ?? socialImage
     {cardImage && <meta name="twitter:image" content={cardImage} />}
     <meta name="twitter:card" content={cardImage ? 'summary_large_image' : 'summary'} />
 
-    <Font cssVariable="--font-sans" preload />
+    {
+      /**
+       * `latin` alone, not a bare `preload`. `--font-sans` is Noto Sans
+       * Arabic, and a bare `preload` preloads every face of the family, which
+       * would put the 162 KB Arabic file on English-only pages and give back
+       * the saving `unicode-range` exists to make. Naming the subset preloads
+       * the one file every page genuinely needs, and leaves the Arabic one to
+       * be fetched by the pages that reference its codepoints.
+       */
+    }
+    <Font cssVariable="--font-sans" preload={[{ subset: 'latin' }]} />
     <Font cssVariable="--font-mono" />
 
     {

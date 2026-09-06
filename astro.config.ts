@@ -174,35 +174,68 @@ export default defineConfig({
   fonts: [
     {
       provider: fontProviders.google(),
-      name: 'Public Sans',
+      /**
+       * One family for both scripts. 74 of the notes here carry Persian, and
+       * whole paragraphs of it rather than stray words. Public Sans, which
+       * held this variable before, has no Arabic coverage at all: its
+       * `unicode-range` excludes the block outright, so every Persian run fell
+       * through to whatever the reader's platform happened to choose. SF
+       * Arabic on Apple, Segoe UI on Windows, Noto Naskh on Android. Naming
+       * one family that covers both scripts is what makes the Persian match
+       * the English sitting next to it, on every device.
+       *
+       * Replacing rather than joining Public Sans: nothing then downloads a
+       * face that nothing renders. The cost is that the Latin changes
+       * site-wide, to Noto Sans's Latin, which is the neutral end of the same
+       * bargain.
+       *
+       * It is also the only mechanism that reaches note card titles, TOC
+       * entries, search results and graph labels. Those carry `unicode-bidi:
+       * isolate` but no `dir` attribute, so no `[dir="rtl"]` rule can select
+       * them; the family stack does not need to.
+       */
+      name: 'Noto Sans Arabic',
       cssVariable: '--font-sans',
       /**
-       * One variable axis rather than four static cuts: fewer files, and the
-       * 300 end of the range exists at all: the static set started at 400, so
-       * anything asking for light silently got regular.
+       * Unchanged from the face this replaces, and still one variable axis
+       * rather than a set of static cuts. This one runs 100 to 900, so the
+       * requested range sits well inside it.
        */
       weights: ['300 700'],
-      styles: ['normal', 'italic'],
-      subsets: ['latin', 'latin-ext'],
+      /**
+       * Normal only. Google publishes no italic cut of this face and answers
+       * `ital,wght@1,400` with an HTTP 400, so leaving `italic` here would ask
+       * for a file that does not exist. The two italic body rules in
+       * `prose.css` get a synthesized oblique instead.
+       */
+      styles: ['normal'],
+      /**
+       * `arabic` is the whole point. Astro reads the provider's per-subset
+       * `unicode-range` and reproduces it, so the 162 KB Arabic file is
+       * fetched only by pages that actually contain Arabic-block codepoints.
+       * `Base.astro` preloads the latin file alone for the same reason.
+       */
+      subsets: ['arabic', 'latin', 'latin-ext'],
       fallbacks: ['ui-sans-serif', 'system-ui', 'sans-serif'],
       /**
-       * Astro's metric-matched fallback is *wrong* for this face, and wrong in
-       * the most visible way there is: it emitted
+       * Astro's metric-matched fallback is *wrong* for variable faces, and
+       * wrong in the most visible way there is. Against Public Sans it emitted
        *
        *   @font-face { font-family: "Public Sans … fallback: Arial";
        *                src: local("Arial"); size-adjust: 169.9189%; … }
        *
        * and prepended it to `--font-sans`, so every first paint before the real
-       * font arrives rendered Arial at 170% and then snapped back. Public Sans
-       * and Arial have near-identical x-heights; the honest number is around
-       * 100%. The same build computes 99.98% for IBM Plex Mono against Courier
-       * New: the difference between them is that the mono face is static and
-       * this one is variable, which is where the metrics read goes wrong.
+       * font arrived rendered Arial at 170% and then snapped back, when the
+       * honest number was around 100%. The same build computed 99.98% for IBM
+       * Plex Mono against Courier New: the difference between them is that the
+       * mono face is static and that one was variable, which is where the
+       * metrics read goes wrong. This face is variable too, so the reason
+       * carries over unchanged.
        *
        * Off, so the fallback is the stack above: `ui-sans-serif` is the system
-       * UI face, close enough to Public Sans that the swap is a change of
-       * typeface rather than of size. Worth re-testing when Astro updates:
-       * a correct optimized fallback is better than an unoptimized one.
+       * UI face, close enough that the swap is a change of typeface rather
+       * than of size. Worth re-testing when Astro updates: a correct optimized
+       * fallback is better than an unoptimized one.
        */
       optimizedFallbacks: false,
     },
